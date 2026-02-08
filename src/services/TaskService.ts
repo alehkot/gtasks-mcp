@@ -127,7 +127,7 @@ export class TaskService {
     if (args.status !== undefined) task.status = args.status;
     if (args.due !== undefined) task.due = args.due;
 
-    const taskResponse = await this.client.tasks.update({
+    const taskResponse = await this.client.tasks.patch({
       tasklist: taskListId,
       task: args.id,
       requestBody: task,
