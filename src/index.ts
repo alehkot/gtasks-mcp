@@ -1,253 +1,255 @@
 #!/usr/bin/env node
 
 import { authenticate } from "@google-cloud/local-auth";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import fs from "fs";
-import { google, tasks_v1 } from "googleapis";
+import { google } from "googleapis";
 import path from "path";
-import { TaskActions, TaskResources } from "./Tasks.js";
+import { z } from "zod";
+import { TaskActions, TaskListActions, TaskResources } from "./Tasks.js";
 
-const tasks = google.tasks("v1");
+const googleTasks = google.tasks("v1");
 
-const server = new Server(
-  {
-    name: "example-servers/gtasks",
-    version: "0.1.0",
+const server = new McpServer({
+  name: "example-servers/gtasks",
+  version: "0.1.0",
+});
+
+// --- Resources ---
+
+server.registerResource(
+  "task",
+  new ResourceTemplate("gtasks:///{taskId}", {
+    list: async () => {
+      const [allTasks] = await TaskResources.list(googleTasks);
+      return {
+        resources: allTasks.map((task) => ({
+          uri: `gtasks:///${task.id}`,
+          mimeType: "text/plain",
+          name: task.title || "Untitled",
+        })),
+      };
+    },
+  }),
+  { mimeType: "text/plain" },
+  async (uri, variables) => {
+    const taskId = variables.taskId as string;
+    const task = await TaskResources.read(taskId, googleTasks);
+
+    const taskDetails = [
+      `Title: ${task.title || "No title"}`,
+      `Status: ${task.status || "Unknown"}`,
+      `Due: ${task.due || "Not set"}`,
+      `Notes: ${task.notes || "No notes"}`,
+      `Hidden: ${task.hidden || "Unknown"}`,
+      `Parent: ${task.parent || "Unknown"}`,
+      `Deleted?: ${task.deleted || "Unknown"}`,
+      `Completed Date: ${task.completed || "Unknown"}`,
+      `Position: ${task.position || "Unknown"}`,
+      `ETag: ${task.etag || "Unknown"}`,
+      `Links: ${task.links || "Unknown"}`,
+      `Kind: ${task.kind || "Unknown"}`,
+      `Updated: ${task.updated || "Unknown"}`,
+    ].join("\n");
+
+    return {
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "text/plain",
+          text: taskDetails,
+        },
+      ],
+    };
   },
+);
+
+// --- Shared filter schema ---
+
+const taskFilterSchema = {
+  taskListId: z.string().describe("Task list ID. If omitted, tasks from all lists are returned.").optional(),
+  showCompleted: z.boolean().describe("Whether to include completed tasks. Default: true.").optional(),
+  showHidden: z.boolean().describe("Whether to include hidden tasks. Default: true.").optional(),
+  showDeleted: z.boolean().describe("Whether to include deleted tasks. Default: false.").optional(),
+  showAssigned: z.boolean().describe("Whether to include assigned tasks. Default: true.").optional(),
+  completedMin: z.string().describe("Lower bound for task completion date (RFC 3339 timestamp).").optional(),
+  completedMax: z.string().describe("Upper bound for task completion date (RFC 3339 timestamp).").optional(),
+  dueMin: z.string().describe("Lower bound for task due date (RFC 3339 timestamp).").optional(),
+  dueMax: z.string().describe("Upper bound for task due date (RFC 3339 timestamp).").optional(),
+  updatedMin: z.string().describe("Lower bound for task last modification time (RFC 3339 timestamp).").optional(),
+};
+
+// --- Task Tools ---
+
+server.registerTool(
+  "search",
   {
-    capabilities: {
-      resources: {},
-      tools: {},
+    description: "Search for a task in Google Tasks",
+    inputSchema: {
+      query: z.string().describe("Search query"),
+      ...taskFilterSchema,
     },
   },
+  async ({ query, ...filters }) => TaskActions.search(query, filters, googleTasks),
 );
 
-server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
-  const [allTasks, nextPageToken] = await TaskResources.list(request, tasks);
-  return {
-    resources: allTasks.map((task) => ({
-      uri: `gtasks:///${task.id}`,
-      mimeType: "text/plain",
-      name: task.title,
-    })),
-    nextCursor: nextPageToken,
-  };
-});
-
-server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-  const task = await TaskResources.read(request, tasks);
-
-  const taskDetails = [
-    `Title: ${task.title || "No title"}`,
-    `Status: ${task.status || "Unknown"}`,
-    `Due: ${task.due || "Not set"}`,
-    `Notes: ${task.notes || "No notes"}`,
-    `Hidden: ${task.hidden || "Unknown"}`,
-    `Parent: ${task.parent || "Unknown"}`,
-    `Deleted?: ${task.deleted || "Unknown"}`,
-    `Completed Date: ${task.completed || "Unknown"}`,
-    `Position: ${task.position || "Unknown"}`,
-    `ETag: ${task.etag || "Unknown"}`,
-    `Links: ${task.links || "Unknown"}`,
-    `Kind: ${task.kind || "Unknown"}`,
-    `Status: ${task.status || "Unknown"}`,
-    `Created: ${task.updated || "Unknown"}`,
-    `Updated: ${task.updated || "Unknown"}`,
-  ].join("\n");
-
-  return {
-    contents: [
-      {
-        uri: request.params.uri,
-        mimeType: "text/plain",
-        text: taskDetails,
-      },
-    ],
-  };
-});
-
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: "search",
-        description: "Search for a task in Google Tasks",
-        inputSchema: {
-          type: "object",
-          properties: {
-            query: {
-              type: "string",
-              description: "Search query",
-            },
-          },
-          required: ["query"],
-        },
-      },
-      {
-        name: "list",
-        description: "List all tasks in Google Tasks",
-        inputSchema: {
-          type: "object",
-          properties: {
-            cursor: {
-              type: "string",
-              description: "Cursor for pagination",
-            },
-          },
-        },
-      },
-      {
-        name: "create",
-        description: "Create a new task in Google Tasks",
-        inputSchema: {
-          type: "object",
-          properties: {
-            taskListId: {
-              type: "string",
-              description: "Task list ID",
-            },
-            title: {
-              type: "string",
-              description: "Task title",
-            },
-            notes: {
-              type: "string",
-              description: "Task notes",
-            },
-            due: {
-              type: "string",
-              description: "Due date",
-            },
-          },
-          required: ["title"],
-        },
-      },
-      {
-        name: "clear",
-        description: "Clear completed tasks from a Google Tasks task list",
-        inputSchema: {
-          type: "object",
-          properties: {
-            taskListId: {
-              type: "string",
-              description: "Task list ID",
-            },
-          },
-          required: ["taskListId"],
-        },
-      },
-      {
-        name: "delete",
-        description: "Delete a task in Google Tasks",
-        inputSchema: {
-          type: "object",
-          properties: {
-            taskListId: {
-              type: "string",
-              description: "Task list ID",
-            },
-            id: {
-              type: "string",
-              description: "Task id",
-            },
-          },
-          required: ["id", "taskListId"],
-        },
-      },
-      {
-        name: "update",
-        description: "Update a task in Google Tasks",
-        inputSchema: {
-          type: "object",
-          properties: {
-            taskListId: {
-              type: "string",
-              description: "Task list ID",
-            },
-            id: {
-              type: "string",
-              description: "Task ID",
-            },
-            uri: {
-              type: "string",
-              description: "Task URI",
-            },
-            title: {
-              type: "string",
-              description: "Task title",
-            },
-            notes: {
-              type: "string",
-              description: "Task notes",
-            },
-            status: {
-              type: "string",
-              enum: ["needsAction", "completed"],
-              description: "Task status (needsAction or completed)",
-            },
-            due: {
-              type: "string",
-              description: "Due date",
-            },
-          },
-          required: ["id", "uri"],
-        },
-      },
-    ],
-  };
-});
-
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (request.params.name === "search") {
-    const taskResult = await TaskActions.search(request, tasks);
-    return taskResult;
-  }
-  if (request.params.name === "list") {
-    const taskResult = await TaskActions.list(request, tasks);
-    return taskResult;
-  }
-  if (request.params.name === "create") {
-    const taskResult = await TaskActions.create(request, tasks);
-    return taskResult;
-  }
-  if (request.params.name === "update") {
-    const taskResult = await TaskActions.update(request, tasks);
-    return taskResult;
-  }
-  if (request.params.name === "delete") {
-    const taskResult = await TaskActions.delete(request, tasks);
-    return taskResult;
-  }
-  if (request.params.name === "clear") {
-    const taskResult = await TaskActions.clear(request, tasks);
-    return taskResult;
-  }
-  throw new Error("Tool not found");
-});
-
-const credentialsPath = path.join(
-  path.dirname(new URL(import.meta.url).pathname),
-  "../.gtasks-server-credentials.json",
+server.registerTool(
+  "list",
+  {
+    description: "List all tasks in Google Tasks",
+    inputSchema: {
+      cursor: z.string().describe("Cursor for pagination").optional(),
+      ...taskFilterSchema,
+    },
+  },
+  async ({ cursor, ...filters }) => TaskActions.list(filters, googleTasks),
 );
+
+server.registerTool(
+  "create",
+  {
+    description: "Create a new task in Google Tasks",
+    inputSchema: {
+      taskListId: z.string().describe("Task list ID").optional(),
+      title: z.string().describe("Task title"),
+      notes: z.string().describe("Task notes").optional(),
+      due: z.string().describe("Due date").optional(),
+      parent: z.string().describe("Parent task ID. If set, the new task becomes a subtask.").optional(),
+      previous: z.string().describe("Previous sibling task ID. New task is placed after this one.").optional(),
+    },
+  },
+  async (args) => TaskActions.create(args, googleTasks),
+);
+
+server.registerTool(
+  "clear",
+  {
+    description: "Clear completed tasks from a Google Tasks task list",
+    inputSchema: {
+      taskListId: z.string().describe("Task list ID"),
+    },
+  },
+  async ({ taskListId }) => TaskActions.clear(taskListId, googleTasks),
+);
+
+server.registerTool(
+  "delete",
+  {
+    description: "Delete a task in Google Tasks",
+    inputSchema: {
+      taskListId: z.string().describe("Task list ID"),
+      id: z.string().describe("Task id"),
+    },
+  },
+  async ({ taskListId, id }) => TaskActions.delete(taskListId, id, googleTasks),
+);
+
+server.registerTool(
+  "update",
+  {
+    description: "Update an existing task in Google Tasks",
+    inputSchema: {
+      taskListId: z.string().describe("Task list ID").optional(),
+      id: z.string().describe("Task ID"),
+      title: z.string().describe("Task title").optional(),
+      notes: z.string().describe("Task notes").optional(),
+      status: z.enum(["needsAction", "completed"]).describe("Task status (needsAction or completed)").optional(),
+      due: z.string().describe("Due date").optional(),
+    },
+  },
+  async (args) => TaskActions.update(args, googleTasks),
+);
+
+// --- Task List Tools ---
+
+server.registerTool(
+  "list_task_lists",
+  {
+    description: "List all task lists in Google Tasks",
+  },
+  async () => TaskListActions.list(googleTasks),
+);
+
+server.registerTool(
+  "get_task_list",
+  {
+    description: "Get a specific task list by ID",
+    inputSchema: {
+      taskListId: z.string().describe("Task list ID"),
+    },
+  },
+  async ({ taskListId }) => TaskListActions.get(taskListId, googleTasks),
+);
+
+server.registerTool(
+  "create_task_list",
+  {
+    description: "Create a new task list in Google Tasks",
+    inputSchema: {
+      title: z.string().describe("Task list title"),
+    },
+  },
+  async ({ title }) => TaskListActions.create(title, googleTasks),
+);
+
+server.registerTool(
+  "update_task_list",
+  {
+    description: "Update an existing task list in Google Tasks",
+    inputSchema: {
+      taskListId: z.string().describe("Task list ID"),
+      title: z.string().describe("New title for the task list").optional(),
+    },
+  },
+  async ({ taskListId, title }) => TaskListActions.update(taskListId, title, googleTasks),
+);
+
+server.registerTool(
+  "delete_task_list",
+  {
+    description: "Delete a task list in Google Tasks",
+    inputSchema: {
+      taskListId: z.string().describe("Task list ID"),
+    },
+  },
+  async ({ taskListId }) => TaskListActions.delete(taskListId, googleTasks),
+);
+
+server.registerTool(
+  "move_task",
+  {
+    description: "Move a task to a different position or parent within a task list, or to a different task list",
+    inputSchema: {
+      taskListId: z.string().describe("Source task list ID"),
+      taskId: z.string().describe("Task ID to move"),
+      parent: z.string().describe("New parent task ID. Omit to move to top level.").optional(),
+      previous: z.string().describe("Previous sibling task ID. Task is placed after this one.").optional(),
+      destinationTasklist: z.string().describe("Destination task list ID. Omit to stay in the same list.").optional(),
+    },
+  },
+  async (args) => TaskActions.move(args, googleTasks),
+);
+
+// --- Auth & Startup ---
+
+const baseDir = path.dirname(new URL(import.meta.url).pathname);
+const credentialsPath = path.join(baseDir, "../.gtasks-server-credentials.json");
+const oauthKeysPath = path.join(baseDir, "../gcp-oauth.keys.json");
+
+function loadOAuthKeys(): { clientId: string; clientSecret: string } {
+  const keysContent = JSON.parse(fs.readFileSync(oauthKeysPath, "utf-8"));
+  const key = keysContent.installed || keysContent.web;
+  if (!key) {
+    throw new Error("Invalid OAuth keys file: missing 'installed' or 'web' key");
+  }
+  return { clientId: key.client_id, clientSecret: key.client_secret };
+}
 
 async function authenticateAndSaveCredentials() {
   console.log("Launching auth flow…");
-  const p = path.join(
-    path.dirname(new URL(import.meta.url).pathname),
-    "../gcp-oauth.keys.json",
-  );
-
-  console.log(p);
   const auth = await authenticate({
-    keyfilePath: p,
+    keyfilePath: oauthKeysPath,
     scopes: ["https://www.googleapis.com/auth/tasks"],
   });
   fs.writeFileSync(credentialsPath, JSON.stringify(auth.credentials));
@@ -263,8 +265,16 @@ async function loadCredentialsAndRunServer() {
   }
 
   const credentials = JSON.parse(fs.readFileSync(credentialsPath, "utf-8"));
-  const auth = new google.auth.OAuth2();
+  const { clientId, clientSecret } = loadOAuthKeys();
+
+  const auth = new google.auth.OAuth2(clientId, clientSecret);
   auth.setCredentials(credentials);
+
+  auth.on("tokens", (newTokens) => {
+    const merged = { ...credentials, ...newTokens };
+    fs.writeFileSync(credentialsPath, JSON.stringify(merged));
+  });
+
   google.options({ auth });
 
   const transport = new StdioServerTransport();

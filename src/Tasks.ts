@@ -1,83 +1,135 @@
-import {
-  CallToolRequest,
-  CallToolResult,
-  ListResourcesRequest,
-  ReadResourceRequest,
-} from "@modelcontextprotocol/sdk/types.js";
 import { tasks_v1 } from "googleapis";
 
 const MAX_TASK_RESULTS = 100;
 
 export class TaskResources {
-  static async read(request: ReadResourceRequest, tasks: tasks_v1.Tasks) {
-    const taskId = request.params.uri.replace("gtasks:///", "");
+  static async read(taskId: string, tasks: tasks_v1.Tasks) {
+    const taskListsResponse = await tasks.tasklists.list({
+      maxResults: MAX_TASK_RESULTS,
+    });
+
+    const taskLists = taskListsResponse.data.items || [];
+
+    const results = await Promise.allSettled(
+      taskLists
+        .filter((tl) => tl.id)
+        .map((taskList) =>
+          tasks.tasks.get({ tasklist: taskList.id!, task: taskId }),
+        ),
+    );
+
+    const found = results.find(
+      (r) => r.status === "fulfilled",
+    );
+
+    if (!found || found.status !== "fulfilled") {
+      throw new Error("Task not found");
+    }
+
+    return found.value.data;
+  }
+
+  static async list(
+    tasks: tasks_v1.Tasks,
+    cursor?: string,
+  ): Promise<[tasks_v1.Schema$Task[], string | null]> {
+    const pageSize = 10;
+    const params: { maxResults: number; pageToken?: string } = {
+      maxResults: pageSize,
+    };
+
+    if (cursor) {
+      params.pageToken = cursor;
+    }
 
     const taskListsResponse = await tasks.tasklists.list({
       maxResults: MAX_TASK_RESULTS,
     });
 
     const taskLists = taskListsResponse.data.items || [];
-    let task: tasks_v1.Schema$Task | null = null;
 
-    for (const taskList of taskLists) {
-      if (taskList.id) {
-        try {
-          const taskResponse = await tasks.tasks.get({
-            tasklist: taskList.id,
-            task: taskId,
-          });
-          task = taskResponse.data;
-          break;
-        } catch (error) {
-          // Task not found in this list, continue to the next one
+    const responses = await Promise.allSettled(
+      taskLists
+        .filter((tl) => tl.id)
+        .map((taskList) =>
+          tasks.tasks.list({ tasklist: taskList.id!, ...params }),
+        ),
+    );
+
+    let allTasks: tasks_v1.Schema$Task[] = [];
+    let nextPageToken: string | null = null;
+
+    for (const result of responses) {
+      if (result.status === "fulfilled") {
+        const taskItems = result.value.data.items || [];
+        allTasks = allTasks.concat(taskItems);
+        if (result.value.data.nextPageToken) {
+          nextPageToken = result.value.data.nextPageToken;
         }
       }
     }
 
-    if (!task) {
-      throw new Error("Task not found");
-    }
-
-    return task;
+    return [allTasks, nextPageToken];
   }
+}
 
-  static async list(
-    request: ListResourcesRequest,
-    tasks: tasks_v1.Tasks,
-  ): Promise<[tasks_v1.Schema$Task[], string | null]> {
-    const pageSize = 10;
-    const params: any = {
-      maxResults: pageSize,
-    };
+export interface TaskListFilterArgs {
+  taskListId?: string;
+  showCompleted?: boolean;
+  showHidden?: boolean;
+  showDeleted?: boolean;
+  showAssigned?: boolean;
+  completedMin?: string;
+  completedMax?: string;
+  dueMin?: string;
+  dueMax?: string;
+  updatedMin?: string;
+}
 
-    if (request.params?.cursor) {
-      params.pageToken = request.params.cursor;
-    }
-
-    const taskListsResponse = await tasks.tasklists.list({
+export class TaskListActions {
+  static async list(tasks: tasks_v1.Tasks) {
+    const response = await tasks.tasklists.list({
       maxResults: MAX_TASK_RESULTS,
     });
+    const taskLists = response.data.items || [];
+    const formatted = taskLists
+      .map((tl) => `${tl.title} - ID: ${tl.id} - Updated: ${tl.updated}`)
+      .join("\n");
+    return {
+      content: [{ type: "text" as const, text: `Found ${taskLists.length} task lists:\n${formatted}` }],
+    };
+  }
 
-    const taskLists = taskListsResponse.data.items || [];
+  static async get(taskListId: string, tasks: tasks_v1.Tasks) {
+    const response = await tasks.tasklists.get({ tasklist: taskListId });
+    const tl = response.data;
+    return {
+      content: [{ type: "text" as const, text: `Title: ${tl.title}\nID: ${tl.id}\nUpdated: ${tl.updated}\nKind: ${tl.kind}\nETag: ${tl.etag}` }],
+    };
+  }
 
-    let allTasks: tasks_v1.Schema$Task[] = [];
-    let nextPageToken = null;
+  static async create(title: string, tasks: tasks_v1.Tasks) {
+    const response = await tasks.tasklists.insert({ requestBody: { title } });
+    return {
+      content: [{ type: "text" as const, text: `Task list created: ${response.data.title} (ID: ${response.data.id})` }],
+    };
+  }
 
-    for (const taskList of taskLists) {
-      const tasksResponse = await tasks.tasks.list({
-        tasklist: taskList.id,
-        ...params,
-      });
+  static async update(taskListId: string, title: string | undefined, tasks: tasks_v1.Tasks) {
+    const response = await tasks.tasklists.update({
+      tasklist: taskListId,
+      requestBody: { title },
+    });
+    return {
+      content: [{ type: "text" as const, text: `Task list updated: ${response.data.title}` }],
+    };
+  }
 
-      const taskItems = tasksResponse.data.items || [];
-      allTasks = allTasks.concat(taskItems);
-
-      if (tasksResponse.data.nextPageToken) {
-        nextPageToken = tasksResponse.data.nextPageToken;
-      }
-    }
-
-    return [allTasks, nextPageToken];
+  static async delete(taskListId: string, tasks: tasks_v1.Tasks) {
+    await tasks.tasklists.delete({ tasklist: taskListId });
+    return {
+      content: [{ type: "text" as const, text: `Task list ${taskListId} deleted` }],
+    };
   }
 }
 
@@ -90,188 +142,162 @@ export class TaskActions {
     return taskList.map((task) => this.formatTask(task)).join("\n");
   }
 
-  private static async _list(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+  static async _list(filters: TaskListFilterArgs, tasks: tasks_v1.Tasks) {
+    const listParams: Record<string, any> = {
+      maxResults: MAX_TASK_RESULTS,
+    };
+    if (filters.showCompleted !== undefined) listParams.showCompleted = filters.showCompleted;
+    if (filters.showHidden !== undefined) listParams.showHidden = filters.showHidden;
+    if (filters.showDeleted !== undefined) listParams.showDeleted = filters.showDeleted;
+    if (filters.showAssigned !== undefined) listParams.showAssigned = filters.showAssigned;
+    if (filters.completedMin) listParams.completedMin = filters.completedMin;
+    if (filters.completedMax) listParams.completedMax = filters.completedMax;
+    if (filters.dueMin) listParams.dueMin = filters.dueMin;
+    if (filters.dueMax) listParams.dueMax = filters.dueMax;
+    if (filters.updatedMin) listParams.updatedMin = filters.updatedMin;
+
+    if (filters.taskListId) {
+      const response = await tasks.tasks.list({ tasklist: filters.taskListId, ...listParams });
+      return response.data.items || [];
+    }
+
     const taskListsResponse = await tasks.tasklists.list({
       maxResults: MAX_TASK_RESULTS,
     });
 
     const taskLists = taskListsResponse.data.items || [];
+
+    const results = await Promise.allSettled(
+      taskLists
+        .filter((tl) => tl.id)
+        .map((taskList) =>
+          tasks.tasks.list({
+            tasklist: taskList.id!,
+            ...listParams,
+          }),
+        ),
+    );
+
     let allTasks: tasks_v1.Schema$Task[] = [];
-
-    for (const taskList of taskLists) {
-      if (taskList.id) {
-        try {
-          const tasksResponse = await tasks.tasks.list({
-            tasklist: taskList.id,
-            maxResults: MAX_TASK_RESULTS,
-          });
-
-          const items = tasksResponse.data.items || [];
-          allTasks = allTasks.concat(items);
-        } catch (error) {
-          console.error(`Error fetching tasks for list ${taskList.id}:`, error);
-        }
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        const items = result.value.data.items || [];
+        allTasks = allTasks.concat(items);
+      } else {
+        console.error("Error fetching tasks:", result.reason);
       }
     }
     return allTasks;
   }
 
-  static async create(request: CallToolRequest, tasks: tasks_v1.Tasks) {
-    const taskListId =
-      (request.params.arguments?.taskListId as string) || "@default";
-    const taskTitle = request.params.arguments?.title as string;
-    const taskNotes = request.params.arguments?.notes as string;
-    const taskStatus = request.params.arguments?.status as string;
-    const taskDue = request.params.arguments?.due as string;
+  static async create(
+    args: { taskListId?: string; title: string; notes?: string; status?: string; due?: string; parent?: string; previous?: string },
+    tasks: tasks_v1.Tasks,
+  ) {
+    const taskListId = args.taskListId || "@default";
+    const task: Record<string, string> = { title: args.title };
+    if (args.notes) task.notes = args.notes;
+    if (args.due) task.due = args.due;
+    if (args.status) task.status = args.status;
 
-    if (!taskTitle) {
-      throw new Error("Task title is required");
-    }
-
-    const task = {
-      title: taskTitle,
-      notes: taskNotes,
-      due: taskDue,
-    };
-
-    const taskResponse = await tasks.tasks.insert({
+    const insertParams: Record<string, any> = {
       tasklist: taskListId,
       requestBody: task,
-    });
+    };
+    if (args.parent) insertParams.parent = args.parent;
+    if (args.previous) insertParams.previous = args.previous;
+
+    const taskResponse = await tasks.tasks.insert(insertParams);
 
     return {
-      content: [
-        {
-          type: "text",
-          text: `Task created: ${taskResponse.data.title}`,
-        },
-      ],
-      isError: false,
+      content: [{ type: "text" as const, text: `Task created: ${taskResponse.data.title}` }],
     };
   }
 
-  static async update(request: CallToolRequest, tasks: tasks_v1.Tasks) {
-    const taskListId =
-      (request.params.arguments?.taskListId as string) || "@default";
-    const taskUri = request.params.arguments?.uri as string;
-    const taskId = request.params.arguments?.id as string;
-    const taskTitle = request.params.arguments?.title as string;
-    const taskNotes = request.params.arguments?.notes as string;
-    const taskStatus = request.params.arguments?.status as string;
-    const taskDue = request.params.arguments?.due as string;
+  static async update(
+    args: { taskListId?: string; id: string; title?: string; notes?: string; status?: string; due?: string },
+    tasks: tasks_v1.Tasks,
+  ) {
+    const taskListId = args.taskListId || "@default";
 
-    if (!taskUri) {
-      throw new Error("Task URI is required");
-    }
-
-    if (!taskId) {
-      throw new Error("Task ID is required");
-    }
-
-    const task = {
-      id: taskId,
-      title: taskTitle,
-      notes: taskNotes,
-      status: taskStatus,
-      due: taskDue,
-    };
+    const task: Record<string, string | undefined> = { id: args.id };
+    if (args.title !== undefined) task.title = args.title;
+    if (args.notes !== undefined) task.notes = args.notes;
+    if (args.status !== undefined) task.status = args.status;
+    if (args.due !== undefined) task.due = args.due;
 
     const taskResponse = await tasks.tasks.update({
       tasklist: taskListId,
-      task: taskUri,
+      task: args.id,
       requestBody: task,
     });
 
     return {
-      content: [
-        {
-          type: "text",
-          text: `Task updated: ${taskResponse.data.title}`,
-        },
-      ],
-      isError: false,
+      content: [{ type: "text" as const, text: `Task updated: ${taskResponse.data.title}` }],
     };
   }
 
-  static async list(request: CallToolRequest, tasks: tasks_v1.Tasks) {
-    const allTasks = await this._list(request, tasks);
+  static async list(filters: TaskListFilterArgs, tasks: tasks_v1.Tasks) {
+    const allTasks = await this._list(filters, tasks);
     const taskList = this.formatTaskList(allTasks);
 
     return {
-      content: [
-        {
-          type: "text",
-          text: `Found ${allTasks.length} tasks:\n${taskList}`,
-        },
-      ],
-      isError: false,
+      content: [{ type: "text" as const, text: `Found ${allTasks.length} tasks:\n${taskList}` }],
     };
   }
 
-  static async delete(request: CallToolRequest, tasks: tasks_v1.Tasks) {
-    const taskListId =
-      (request.params.arguments?.taskListId as string) || "@default";
-    const taskId = request.params.arguments?.id as string;
-
-    if (!taskId) {
-      throw new Error("Task URI is required");
-    }
-
+  static async delete(taskListId: string | undefined, taskId: string, tasks: tasks_v1.Tasks) {
     await tasks.tasks.delete({
-      tasklist: taskListId,
+      tasklist: taskListId || "@default",
       task: taskId,
     });
 
     return {
-      content: [
-        {
-          type: "text",
-          text: `Task ${taskId} deleted`,
-        },
-      ],
-      isError: false,
+      content: [{ type: "text" as const, text: `Task ${taskId} deleted` }],
     };
   }
 
-  static async search(request: CallToolRequest, tasks: tasks_v1.Tasks) {
-    const userQuery = request.params.arguments?.query as string;
-
-    const allTasks = await this._list(request, tasks);
+  static async search(query: string, filters: TaskListFilterArgs, tasks: tasks_v1.Tasks) {
+    const allTasks = await this._list(filters, tasks);
     const filteredItems = allTasks.filter(
       (task) =>
-        task.title?.toLowerCase().includes(userQuery.toLowerCase()) ||
-        task.notes?.toLowerCase().includes(userQuery.toLowerCase()),
+        task.title?.toLowerCase().includes(query.toLowerCase()) ||
+        task.notes?.toLowerCase().includes(query.toLowerCase()),
     );
 
     const taskList = this.formatTaskList(filteredItems);
 
     return {
-      content: [
-        {
-          type: "text",
-          text: `Found ${allTasks.length} tasks:\n${taskList}`,
-        },
-      ],
-      isError: false,
+      content: [{ type: "text" as const, text: `Found ${filteredItems.length} tasks:\n${taskList}` }],
     };
   }
 
-  static async clear(request: CallToolRequest, tasks: tasks_v1.Tasks) {
-    const taskListId =
-      (request.params.arguments?.taskListId as string) || "@default";
-
+  static async clear(taskListId: string | undefined, tasks: tasks_v1.Tasks) {
     await tasks.tasks.clear({
-      tasklist: taskListId,
+      tasklist: taskListId || "@default",
     });
 
     return {
-      content: [
-        {
-          type: "text",
-          text: `Tasks from tasklist ${taskListId} cleared`,
-        },
-      ],
-      isError: false,
+      content: [{ type: "text" as const, text: `Tasks from tasklist ${taskListId || "@default"} cleared` }],
+    };
+  }
+
+  static async move(
+    args: { taskListId: string; taskId: string; parent?: string; previous?: string; destinationTasklist?: string },
+    tasks: tasks_v1.Tasks,
+  ) {
+    const moveParams: Record<string, any> = {
+      tasklist: args.taskListId,
+      task: args.taskId,
+    };
+    if (args.parent) moveParams.parent = args.parent;
+    if (args.previous) moveParams.previous = args.previous;
+    if (args.destinationTasklist) moveParams.destinationTasklist = args.destinationTasklist;
+
+    const response = await tasks.tasks.move(moveParams);
+
+    return {
+      content: [{ type: "text" as const, text: `Task moved: ${response.data.title} (ID: ${response.data.id})` }],
     };
   }
 }
