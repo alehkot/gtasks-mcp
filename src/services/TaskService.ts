@@ -16,6 +16,24 @@ import {
 export class TaskService {
   constructor(private readonly client: tasks_v1.Tasks) {}
 
+  /** Fetches all task lists across API pages. */
+  private async fetchAllTaskLists(): Promise<tasks_v1.Schema$TaskList[]> {
+    const taskLists: tasks_v1.Schema$TaskList[] = [];
+    let pageToken: string | undefined;
+
+    do {
+      const response = await this.client.tasklists.list({
+        maxResults: MAX_TASK_RESULTS,
+        pageToken,
+      });
+
+      taskLists.push(...(response.data.items || []));
+      pageToken = response.data.nextPageToken || undefined;
+    } while (pageToken);
+
+    return taskLists;
+  }
+
   /** Fetches all tasks from a single task list across API pages. */
   private async fetchAllTasksFromTaskList(
     taskListId: string,
@@ -50,11 +68,7 @@ export class TaskService {
       return this.fetchAllTasksFromTaskList(filters.taskListId, listParams);
     }
 
-    const taskListsResponse = await this.client.tasklists.list({
-      maxResults: MAX_TASK_RESULTS,
-    });
-
-    const taskLists = taskListsResponse.data.items || [];
+    const taskLists = await this.fetchAllTaskLists();
 
     const results = await Promise.allSettled(
       taskLists
