@@ -21,12 +21,12 @@
   },
   "dependencies": {
     "@google-cloud/local-auth": "^3.0.1",
-    "@modelcontextprotocol/sdk": "1.0.1",
-    "googleapis": "^144.0.0"
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "googleapis": "^171.4.0"
   },
   "devDependencies": {
-    "@types/node": "^22.9.3",
-    "shx": "^0.3.4",
-    "typescript": "^5.6.2"
+    "@types/node": "^25.2.2",
+    "shx": "^0.4.0",
+    "typescript": "^5.9.3"
   }
 }
