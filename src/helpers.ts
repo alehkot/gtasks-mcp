@@ -35,13 +35,10 @@ export interface PaginationMetadata {
   nextCursor: string | null;
 }
 
-/** Wraps text plus machine-readable pagination metadata for MCP clients. */
+/** Wraps text plus pagination metadata as a plain text MCP response. */
 export function paginatedTextResponse(text: string, pagination: PaginationMetadata) {
   return {
-    content: [{ type: "text" as const, text }],
-    structuredContent: {
-      pagination,
-    },
+    content: [{ type: "text" as const, text: `${text}\n\n${JSON.stringify({ pagination })}` }],
   };
 }
 

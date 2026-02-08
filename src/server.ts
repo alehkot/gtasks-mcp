@@ -23,16 +23,6 @@ const taskFilterSchema = {
   updatedMin: z.string().describe("Lower bound for task last modification time (RFC 3339 timestamp).").optional(),
 };
 
-const taskPaginationOutputSchema = {
-  pagination: z.object({
-    pageSize: z.number().int().positive(),
-    total: z.number().int().nonnegative(),
-    offset: z.number().int().nonnegative(),
-    returned: z.number().int().nonnegative(),
-    nextCursor: z.string().nullable(),
-  }),
-};
-
 /** Creates the MCP server, registers all tools and resources, and starts the stdio transport. */
 export async function startServer() {
   const client = createAuthenticatedClient();
@@ -104,7 +94,6 @@ export async function startServer() {
           .optional(),
         ...taskFilterSchema,
       },
-      outputSchema: taskPaginationOutputSchema,
     },
     async ({ query, cursor, ...filters }) => taskService.search(query, filters, cursor),
   );
@@ -120,7 +109,6 @@ export async function startServer() {
           .optional(),
         ...taskFilterSchema,
       },
-      outputSchema: taskPaginationOutputSchema,
     },
     async ({ cursor, ...filters }) => taskService.list(filters, cursor),
   );
