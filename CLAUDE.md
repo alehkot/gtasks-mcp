@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-MCP (Model Context Protocol) server for Google Tasks API integration. Allows AI assistants to list, search, create, update, and delete Google Tasks. Published as `@modelcontextprotocol/server-gtasks`.
+MCP (Model Context Protocol) server for Google Tasks API integration. Allows AI assistants to manage tasks and task lists — search, list, create, update, delete, move, and clear. Published as `@modelcontextprotocol/server-gtasks`.
 
 ## Commands
 
@@ -12,19 +12,28 @@ MCP (Model Context Protocol) server for Google Tasks API integration. Allows AI 
 - `npm run dev` — Watch mode (`tsc --watch`)
 - `npm run start` — Run the server (`node dist/index.js`)
 - `npm run start auth` — First-time OAuth authentication via browser
+- `npm run lint:md` — Lint markdown files with markdownlint-cli2
+- `npm run fix:md` — Auto-fix markdown lint issues
 
-No test framework or linter is configured.
+No test framework is configured.
+
+## Workflows
+
+- After editing any `.md` file, run `npm run fix:md` then `npm run lint:md` to ensure it passes.
 
 ## Architecture
 
-Two source files in `src/`:
+Source files in `src/`:
 
-- **index.ts** — MCP server setup, OAuth2 authentication flow, request handler registration (resources + tools), stdio transport. Reads credentials from `.gtasks-server-credentials.json` and OAuth keys from `gcp-oauth.keys.json`.
-- **Tasks.ts** — Business logic in two classes:
-  - `TaskResources` — `read()` and `list()` for MCP resource protocol (URIs like `gtasks:///taskId`)
-  - `TaskActions` — `search()`, `list()`, `create()`, `update()`, `delete()`, `clear()` for MCP tool protocol
+- **index.ts** — Entry point. Dispatches to auth flow or server startup.
+- **server.ts** — MCP server setup, tool/resource registration, stdio transport.
+- **auth.ts** — OAuth2 authentication flow. Reads credentials from `.gtasks-server-credentials.json` and OAuth keys from `gcp-oauth.keys.json`.
+- **helpers.ts** — Shared utilities (e.g. `MAX_TASK_RESULTS`).
+- **services/TaskService.ts** — Task CRUD, search, move, and clear operations.
+- **services/TaskListService.ts** — Task list CRUD operations.
+- **resources/TaskResourceHandler.ts** — MCP resource protocol (`read()` and `list()` for `gtasks:///` URIs).
 
-The server exposes 6 MCP tools and task resources over stdio transport. Google Tasks API calls go through `googleapis` with OAuth2 credentials. `MAX_TASK_RESULTS` is 100.
+The server exposes 12 MCP tools (7 task + 5 task list) and task resources over stdio transport. Google Tasks API calls go through `googleapis` with OAuth2 credentials.
 
 ## Key Technical Details
 

@@ -1,0 +1,10 @@
+{
+  "globs": ["**/*.md", "!node_modules", "!AGENTS.md"],
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD024": { "siblings_only": true },
+    "MD036": false,
+    "MD060": false
+  }
+}
