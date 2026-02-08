@@ -83,6 +83,24 @@ To install Google Tasks Server for Claude Desktop automatically via [Smithery](h
 npx -y @smithery/cli install @zcaceres/gtasks --client claude
 ```
 
+### Installing locally for Claude Code
+
+Clone the repo, run `npm install && npm run build`, then:
+
+```bash
+claude mcp add --scope user gtasks node "$(pwd)/dist/index.js"
+```
+
+### Installing locally for Codex agent (user-scoped)
+
+Clone the repo, run `npm install && npm run build`, then run:
+
+```bash
+codex mcp add gtasks -- node "$(pwd)/dist/index.js"
+```
+
+This adds the server to your user config (`~/.codex/config.toml`), not project-scoped `.codex/config.toml`.
+
 ### Authentication
 
 To authenticate and save credentials:
