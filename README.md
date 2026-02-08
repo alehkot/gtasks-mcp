@@ -65,11 +65,13 @@ The server provides access to Google Tasks resources:
 
 1. [Create a new Google Cloud project](https://console.cloud.google.com/projectcreate)
 2. [Enable the Google Tasks API](https://console.cloud.google.com/workspace-api/products)
-3. [Configure an OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent) ("internal" is fine for testing)
-4. Add scopes `https://www.googleapis.com/auth/tasks`
-5. [Create an OAuth Client ID](https://console.cloud.google.com/apis/credentials/oauthclient) for application type "Desktop App"
-6. Download the JSON file of your client's OAuth keys
-7. Rename the key file to `gcp-oauth.keys.json` and place into the root of this repo (i.e. `gcp-oauth.keys.json`)
+3. In [Google Auth Platform](https://console.cloud.google.com/apis/credentials/consent), configure OAuth for testing:
+   - Set **User type** to **External** (required for personal/non-Workspace Google accounts)
+   - Add your own email address under **Test users**
+4. Add scope `https://www.googleapis.com/auth/tasks`
+5. [Create an OAuth Client ID](https://console.cloud.google.com/apis/credentials/oauthclient) with application type **Desktop app**
+6. Download the JSON file of your OAuth client keys
+7. Rename the key file to `gcp-oauth.keys.json` and place it in the root of this repo (i.e. `gcp-oauth.keys.json`)
 
 Make sure to build the server with either `npm run build` or `npm run watch`.
 
