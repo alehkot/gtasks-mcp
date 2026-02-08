@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 
+/**
+ * MCP server for Google Tasks API integration.
+ * Exposes tasks as MCP resources and provides tools for full CRUD
+ * on both tasks and task lists, plus move and search operations.
+ */
+
 import { authenticate } from "@google-cloud/local-auth";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -15,8 +21,6 @@ const server = new McpServer({
   name: "example-servers/gtasks",
   version: "0.1.0",
 });
-
-// --- Resources ---
 
 server.registerResource(
   "task",
@@ -65,8 +69,10 @@ server.registerResource(
   },
 );
 
-// --- Shared filter schema ---
-
+/**
+ * Shared Zod schema for task filtering parameters.
+ * Spread into any tool that lists or searches tasks.
+ */
 const taskFilterSchema = {
   taskListId: z.string().describe("Task list ID. If omitted, tasks from all lists are returned.").optional(),
   showCompleted: z.boolean().describe("Whether to include completed tasks. Default: true.").optional(),
@@ -79,8 +85,6 @@ const taskFilterSchema = {
   dueMax: z.string().describe("Upper bound for task due date (RFC 3339 timestamp).").optional(),
   updatedMin: z.string().describe("Lower bound for task last modification time (RFC 3339 timestamp).").optional(),
 };
-
-// --- Task Tools ---
 
 server.registerTool(
   "search",
@@ -161,8 +165,6 @@ server.registerTool(
   async (args) => TaskActions.update(args, googleTasks),
 );
 
-// --- Task List Tools ---
-
 server.registerTool(
   "list_task_lists",
   {
@@ -237,6 +239,7 @@ const baseDir = path.dirname(new URL(import.meta.url).pathname);
 const credentialsPath = path.join(baseDir, "../.gtasks-server-credentials.json");
 const oauthKeysPath = path.join(baseDir, "../gcp-oauth.keys.json");
 
+/** Reads OAuth client ID and secret from the GCP keys file. */
 function loadOAuthKeys(): { clientId: string; clientSecret: string } {
   const keysContent = JSON.parse(fs.readFileSync(oauthKeysPath, "utf-8"));
   const key = keysContent.installed || keysContent.web;
@@ -246,6 +249,7 @@ function loadOAuthKeys(): { clientId: string; clientSecret: string } {
   return { clientId: key.client_id, clientSecret: key.client_secret };
 }
 
+/** Runs the interactive OAuth browser flow and persists the resulting tokens. */
 async function authenticateAndSaveCredentials() {
   console.log("Launching auth flow…");
   const auth = await authenticate({
@@ -256,6 +260,7 @@ async function authenticateAndSaveCredentials() {
   console.log("Credentials saved. You can now run the server.");
 }
 
+/** Loads saved OAuth credentials, configures auto-refresh, and starts the MCP server over stdio. */
 async function loadCredentialsAndRunServer() {
   if (!fs.existsSync(credentialsPath)) {
     console.error(

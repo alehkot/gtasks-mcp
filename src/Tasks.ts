@@ -1,8 +1,20 @@
 import { tasks_v1 } from "googleapis";
 
+/** Maximum number of results to request per Google Tasks API call. */
 const MAX_TASK_RESULTS = 100;
 
+/**
+ * Handles MCP resource protocol operations for Google Tasks.
+ * Provides read and list capabilities for exposing tasks as MCP resources.
+ */
 export class TaskResources {
+  /**
+   * Finds a task by ID across all task lists.
+   * Searches every task list in parallel since the Google Tasks API
+   * requires a task list ID to fetch a task.
+   *
+   * @throws {Error} If the task is not found in any task list.
+   */
   static async read(taskId: string, tasks: tasks_v1.Tasks) {
     const taskListsResponse = await tasks.tasklists.list({
       maxResults: MAX_TASK_RESULTS,
@@ -29,6 +41,10 @@ export class TaskResources {
     return found.value.data;
   }
 
+  /**
+   * Lists tasks from all task lists with pagination support.
+   * @returns A tuple of [tasks, nextPageToken] for cursor-based pagination.
+   */
   static async list(
     tasks: tasks_v1.Tasks,
     cursor?: string,
@@ -73,6 +89,7 @@ export class TaskResources {
   }
 }
 
+/** Optional filters passed through to the Google Tasks `tasks.list` API. */
 export interface TaskListFilterArgs {
   taskListId?: string;
   showCompleted?: boolean;
@@ -86,7 +103,12 @@ export interface TaskListFilterArgs {
   updatedMin?: string;
 }
 
+/**
+ * MCP tool handlers for Google Tasks task list management.
+ * Wraps the `tasklists.*` endpoints of the Google Tasks API.
+ */
 export class TaskListActions {
+  /** Lists all task lists for the authenticated user. */
   static async list(tasks: tasks_v1.Tasks) {
     const response = await tasks.tasklists.list({
       maxResults: MAX_TASK_RESULTS,
@@ -100,6 +122,7 @@ export class TaskListActions {
     };
   }
 
+  /** Retrieves a single task list by its ID. */
   static async get(taskListId: string, tasks: tasks_v1.Tasks) {
     const response = await tasks.tasklists.get({ tasklist: taskListId });
     const tl = response.data;
@@ -108,6 +131,7 @@ export class TaskListActions {
     };
   }
 
+  /** Creates a new task list with the given title. */
   static async create(title: string, tasks: tasks_v1.Tasks) {
     const response = await tasks.tasklists.insert({ requestBody: { title } });
     return {
@@ -115,6 +139,7 @@ export class TaskListActions {
     };
   }
 
+  /** Updates an existing task list's title. */
   static async update(taskListId: string, title: string | undefined, tasks: tasks_v1.Tasks) {
     const response = await tasks.tasklists.update({
       tasklist: taskListId,
@@ -125,6 +150,7 @@ export class TaskListActions {
     };
   }
 
+  /** Permanently deletes a task list and all its tasks. */
   static async delete(taskListId: string, tasks: tasks_v1.Tasks) {
     await tasks.tasklists.delete({ tasklist: taskListId });
     return {
@@ -133,15 +159,26 @@ export class TaskListActions {
   }
 }
 
+/**
+ * MCP tool handlers for Google Tasks task operations.
+ * Wraps the `tasks.*` endpoints of the Google Tasks API.
+ */
 export class TaskActions {
+  /** Formats a single task into a human-readable string with all fields. */
   private static formatTask(task: tasks_v1.Schema$Task) {
     return `${task.title}\n (Due: ${task.due || "Not set"}) - Notes: ${task.notes} - ID: ${task.id} - Status: ${task.status} - URI: ${task.selfLink} - Hidden: ${task.hidden} - Parent: ${task.parent} - Deleted?: ${task.deleted} - Completed Date: ${task.completed} - Position: ${task.position} - Updated Date: ${task.updated} - ETag: ${task.etag} - Links: ${task.links} - Kind: ${task.kind}}`;
   }
 
+  /** Formats an array of tasks into a newline-separated string. */
   private static formatTaskList(taskList: tasks_v1.Schema$Task[]) {
     return taskList.map((task) => this.formatTask(task)).join("\n");
   }
 
+  /**
+   * Fetches tasks from one or all task lists with optional filters.
+   * When {@link TaskListFilterArgs.taskListId} is provided, queries only that list;
+   * otherwise queries all task lists in parallel.
+   */
   static async _list(filters: TaskListFilterArgs, tasks: tasks_v1.Tasks) {
     const listParams: Record<string, any> = {
       maxResults: MAX_TASK_RESULTS,
@@ -190,6 +227,11 @@ export class TaskActions {
     return allTasks;
   }
 
+  /**
+   * Creates a new task in the specified task list.
+   * Supports optional `parent` and `previous` for positioning as a subtask
+   * or after a specific sibling. Defaults to the `@default` task list.
+   */
   static async create(
     args: { taskListId?: string; title: string; notes?: string; status?: string; due?: string; parent?: string; previous?: string },
     tasks: tasks_v1.Tasks,
@@ -214,6 +256,10 @@ export class TaskActions {
     };
   }
 
+  /**
+   * Updates an existing task's fields (title, notes, status, due date).
+   * Only provided fields are overwritten; omitted fields are left unchanged.
+   */
   static async update(
     args: { taskListId?: string; id: string; title?: string; notes?: string; status?: string; due?: string },
     tasks: tasks_v1.Tasks,
@@ -237,6 +283,7 @@ export class TaskActions {
     };
   }
 
+  /** Lists all tasks, optionally filtered, and returns a formatted summary. */
   static async list(filters: TaskListFilterArgs, tasks: tasks_v1.Tasks) {
     const allTasks = await this._list(filters, tasks);
     const taskList = this.formatTaskList(allTasks);
@@ -246,6 +293,7 @@ export class TaskActions {
     };
   }
 
+  /** Permanently deletes a task by ID from the specified task list. */
   static async delete(taskListId: string | undefined, taskId: string, tasks: tasks_v1.Tasks) {
     await tasks.tasks.delete({
       tasklist: taskListId || "@default",
@@ -257,6 +305,10 @@ export class TaskActions {
     };
   }
 
+  /**
+   * Searches for tasks whose title or notes contain the query string.
+   * Performs a case-insensitive client-side filter over the results from {@link _list}.
+   */
   static async search(query: string, filters: TaskListFilterArgs, tasks: tasks_v1.Tasks) {
     const allTasks = await this._list(filters, tasks);
     const filteredItems = allTasks.filter(
@@ -272,6 +324,7 @@ export class TaskActions {
     };
   }
 
+  /** Removes all completed tasks from the specified task list. */
   static async clear(taskListId: string | undefined, tasks: tasks_v1.Tasks) {
     await tasks.tasks.clear({
       tasklist: taskListId || "@default",
@@ -282,6 +335,11 @@ export class TaskActions {
     };
   }
 
+  /**
+   * Moves a task to a new position, parent, or destination task list.
+   * Use `parent` to nest under another task, `previous` to reorder among siblings,
+   * and `destinationTasklist` to move across task lists.
+   */
   static async move(
     args: { taskListId: string; taskId: string; parent?: string; previous?: string; destinationTasklist?: string },
     tasks: tasks_v1.Tasks,
