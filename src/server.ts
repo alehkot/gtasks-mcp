@@ -23,6 +23,16 @@ const taskFilterSchema = {
   updatedMin: z.string().describe("Lower bound for task last modification time (RFC 3339 timestamp).").optional(),
 };
 
+const taskPaginationOutputSchema = {
+  pagination: z.object({
+    pageSize: z.number().int().positive(),
+    total: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative(),
+    returned: z.number().int().nonnegative(),
+    nextCursor: z.string().nullable(),
+  }),
+};
+
 /** Creates the MCP server, registers all tools and resources, and starts the stdio transport. */
 export async function startServer() {
   const client = createAuthenticatedClient();
@@ -88,10 +98,15 @@ export async function startServer() {
       description: "Search for a task in Google Tasks",
       inputSchema: {
         query: z.string().describe("Search query"),
+        cursor: z
+          .string()
+          .describe("Pagination cursor returned from a previous search call. Omit for the first page.")
+          .optional(),
         ...taskFilterSchema,
       },
+      outputSchema: taskPaginationOutputSchema,
     },
-    async ({ query, ...filters }) => taskService.search(query, filters),
+    async ({ query, cursor, ...filters }) => taskService.search(query, filters, cursor),
   );
 
   server.registerTool(
@@ -99,11 +114,15 @@ export async function startServer() {
     {
       description: "List all tasks in Google Tasks",
       inputSchema: {
-        cursor: z.string().describe("Cursor for pagination").optional(),
+        cursor: z
+          .string()
+          .describe("Pagination cursor returned from a previous list call. Omit for the first page.")
+          .optional(),
         ...taskFilterSchema,
       },
+      outputSchema: taskPaginationOutputSchema,
     },
-    async ({ cursor, ...filters }) => taskService.list(filters),
+    async ({ cursor, ...filters }) => taskService.list(filters, cursor),
   );
 
   server.registerTool(

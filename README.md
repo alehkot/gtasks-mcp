@@ -8,13 +8,16 @@ An [MCP](https://modelcontextprotocol.io/) server for the Google Tasks API. Mana
 
 | Tool | Description |
 |------|-------------|
-| `search` | Full-text search across tasks with filtering by status, dates, and task list |
-| `list` | List tasks with pagination and filtering |
+| `search` | Full-text search across tasks with filtering by status, dates, and task list (paginated, 20 per page) |
+| `list` | List tasks with filtering (paginated, 20 per page) |
 | `create` | Create a task (optionally as a subtask or at a specific position) |
 | `update` | Update title, notes, status, or due date |
 | `delete` | Delete a task |
 | `clear` | Clear all completed tasks from a task list |
 | `move_task` | Move a task to a different position, parent, or task list |
+
+`list` and `search` return at most 20 tasks per call. When more results are available, the response includes a `Next cursor` value; pass it back as `cursor` to fetch the next page.
+For programmatic MCP consumers, the pagination token is available at `structuredContent.pagination.nextCursor` (or `null` when there is no next page).
 
 ### Task list tools
 

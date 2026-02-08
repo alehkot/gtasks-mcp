@@ -1,9 +1,11 @@
 import { tasks_v1 } from "googleapis";
 import {
   type TaskListFilterArgs,
+  TASK_PAGE_SIZE,
   MAX_TASK_RESULTS,
   buildListParams,
   formatTaskList,
+  paginatedTextResponse,
   textResponse,
 } from "../helpers.js";
 
@@ -14,6 +16,28 @@ import {
 export class TaskService {
   constructor(private readonly client: tasks_v1.Tasks) {}
 
+  /** Fetches all tasks from a single task list across API pages. */
+  private async fetchAllTasksFromTaskList(
+    taskListId: string,
+    listParams: ReturnType<typeof buildListParams>,
+  ): Promise<tasks_v1.Schema$Task[]> {
+    const tasks: tasks_v1.Schema$Task[] = [];
+    let pageToken: string | undefined;
+
+    do {
+      const response = await this.client.tasks.list({
+        tasklist: taskListId,
+        ...listParams,
+        pageToken,
+      });
+
+      tasks.push(...(response.data.items || []));
+      pageToken = response.data.nextPageToken || undefined;
+    } while (pageToken);
+
+    return tasks;
+  }
+
   /**
    * Fetches tasks from one or all task lists with optional filters.
    * When {@link TaskListFilterArgs.taskListId} is provided, queries only that list;
@@ -23,8 +47,7 @@ export class TaskService {
     const listParams = buildListParams(filters);
 
     if (filters.taskListId) {
-      const response = await this.client.tasks.list({ tasklist: filters.taskListId, ...listParams });
-      return response.data.items || [];
+      return this.fetchAllTasksFromTaskList(filters.taskListId, listParams);
     }
 
     const taskListsResponse = await this.client.tasklists.list({
@@ -36,19 +59,13 @@ export class TaskService {
     const results = await Promise.allSettled(
       taskLists
         .filter((tl) => tl.id)
-        .map((taskList) =>
-          this.client.tasks.list({
-            tasklist: taskList.id!,
-            ...listParams,
-          }),
-        ),
+        .map((taskList) => this.fetchAllTasksFromTaskList(taskList.id!, listParams)),
     );
 
     let allTasks: tasks_v1.Schema$Task[] = [];
     for (const result of results) {
       if (result.status === "fulfilled") {
-        const items = result.value.data.items || [];
-        allTasks = allTasks.concat(items);
+        allTasks = allTasks.concat(result.value);
       } else {
         console.error("Error fetching tasks:", result.reason);
       }
@@ -56,24 +73,87 @@ export class TaskService {
     return allTasks;
   }
 
-  /** Lists all tasks, optionally filtered, and returns a formatted summary. */
-  async list(filters: TaskListFilterArgs) {
+  /** Parses a cursor (offset) for list/search pagination. */
+  private parseCursor(cursor?: string): number {
+    if (!cursor) return 0;
+
+    const offset = Number.parseInt(cursor, 10);
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new Error("Invalid cursor. Use the cursor returned by the previous call.");
+    }
+
+    return offset;
+  }
+
+  /** Returns one page of tasks and the next cursor (if more results remain). */
+  private paginateTasks(tasks: tasks_v1.Schema$Task[], cursor?: string) {
+    const offset = this.parseCursor(cursor);
+    if (tasks.length > 0 && offset >= tasks.length) {
+      throw new Error("Invalid cursor. Use the cursor returned by the previous call.");
+    }
+
+    const page = tasks.slice(offset, offset + TASK_PAGE_SIZE);
+    const nextOffset = offset + page.length;
+    const nextCursor = nextOffset < tasks.length ? String(nextOffset) : null;
+
+    return {
+      page,
+      nextCursor,
+      offset,
+      total: tasks.length,
+    };
+  }
+
+  /** Lists tasks with cursor pagination (20 tasks per page). */
+  async list(filters: TaskListFilterArgs, cursor?: string) {
     const allTasks = await this.fetchTasks(filters);
-    return textResponse(`Found ${allTasks.length} tasks:\n${formatTaskList(allTasks)}`);
+    const { page, nextCursor, offset, total } = this.paginateTasks(allTasks, cursor);
+
+    const header =
+      total === 0
+        ? "Found 0 tasks."
+        : `Found ${total} tasks. Showing ${offset + 1}-${offset + page.length} of ${total}.`;
+
+    const body = page.length > 0 ? formatTaskList(page) : "No tasks on this page.";
+    const cursorLine = nextCursor ? `\nNext cursor: ${nextCursor}` : "";
+
+    return paginatedTextResponse(`${header}\n${body}${cursorLine}`, {
+      pageSize: TASK_PAGE_SIZE,
+      total,
+      offset,
+      returned: page.length,
+      nextCursor,
+    });
   }
 
   /**
    * Searches for tasks whose title or notes contain the query string.
    * Performs a case-insensitive client-side filter over the results from {@link fetchTasks}.
    */
-  async search(query: string, filters: TaskListFilterArgs) {
+  async search(query: string, filters: TaskListFilterArgs, cursor?: string) {
     const allTasks = await this.fetchTasks(filters);
     const filteredItems = allTasks.filter(
       (task) =>
         task.title?.toLowerCase().includes(query.toLowerCase()) ||
         task.notes?.toLowerCase().includes(query.toLowerCase()),
     );
-    return textResponse(`Found ${filteredItems.length} tasks:\n${formatTaskList(filteredItems)}`);
+    const { page, nextCursor, offset, total } = this.paginateTasks(filteredItems, cursor);
+
+    const header =
+      total === 0
+        ? `Found 0 tasks matching "${query}".`
+        : `Found ${total} tasks matching "${query}". Showing ${offset + 1}-${offset + page.length} of ${total}.`;
+
+    const body = page.length > 0 ? formatTaskList(page) : "No tasks on this page.";
+    const cursorLine = nextCursor ? `\nNext cursor: ${nextCursor}` : "";
+
+    return paginatedTextResponse(`${header}\n${body}${cursorLine}`, {
+      pageSize: TASK_PAGE_SIZE,
+      total,
+      offset,
+      returned: page.length,
+      nextCursor,
+    });
   }
 
   /**

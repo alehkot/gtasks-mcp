@@ -3,6 +3,9 @@ import { tasks_v1 } from "googleapis";
 /** Maximum number of results to request per Google Tasks API call. */
 export const MAX_TASK_RESULTS = 100;
 
+/** Number of tasks returned per paginated response. */
+export const TASK_PAGE_SIZE = 20;
+
 /** Optional filters passed through to the Google Tasks `tasks.list` API. */
 export interface TaskListFilterArgs {
   taskListId?: string;
@@ -21,6 +24,24 @@ export interface TaskListFilterArgs {
 export function textResponse(text: string) {
   return {
     content: [{ type: "text" as const, text }],
+  };
+}
+
+export interface PaginationMetadata {
+  pageSize: number;
+  total: number;
+  offset: number;
+  returned: number;
+  nextCursor: string | null;
+}
+
+/** Wraps text plus machine-readable pagination metadata for MCP clients. */
+export function paginatedTextResponse(text: string, pagination: PaginationMetadata) {
+  return {
+    content: [{ type: "text" as const, text }],
+    structuredContent: {
+      pagination,
+    },
   };
 }
 
